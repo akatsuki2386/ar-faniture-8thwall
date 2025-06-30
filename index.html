@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>AR家具配置アプリ (8th Wall版)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <script src="//apps.8thwall.com/xrweb?appKey=YOUR_APP_KEY_HERE"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js"></script>
+
+    <style>
+        /* 元のコードの<style>タグの中身をすべてここにコピーしてください */
+        body { margin: 0; background-color: #1A202C; color: white; font-family: sans-serif; overflow: hidden; }
+        canvas#camerafeed { display: block; width: 100%; height: 100%; } /* 8th Wall用のcanvasスタイル */
+        #title-container { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 5; width: 90%; }
+        #title-container h1 { font-size: 2.2rem; font-weight: bold; line-height: 1.4; color: white; text-shadow: 0 2px 8px rgba(0,0,0,0.5); }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; /* 8th Wallではnoneに */ }
+        /* ... 以下、元のCSSをすべてここに貼り付け ... */
+    </style>
+</head>
+<body>
+    <canvas id="camerafeed"></canvas>
+
+    <div id="title-container">
+        <h1>AR家具配置<br>シミュレーション</h1>
+    </div>
+
+    <div id="overlay">
+        </div>
+
+    <script type="module">
+        // 8th WallではグローバルスコープからTHREEとGLTFLoaderを読み込みます
+        const { THREE } = window;
+        const { GLTFLoader } = THREE;
+
+        // 1. シーンのロジックをカプセル化するオブジェクトを作成します
+        const myScenePipelineModule = () => {
+            // プライベート変数をすべてここに定義
+            let camera, scene, renderer, clock;
+            let reticle;
+            const loader = new GLTFLoader();
+            const preloadedModels = new Map();
+            let floorY = null;
+            let crossMark;
+            let isFloorDetected = false;
+            // ... (元のコードの変数をここに移動)
+            let selectedObject = null, hoveredObject = null, previewObject = null;
+            let appState = 'IDLE', isEditMode = true;
+            const placedObjects = [];
+            const objectsToDelete = [];
+            const raycaster = new THREE.Raycaster();
+            // ... (ジェスチャーやUIの状態変数もすべてここに)
+
+
+            const furnitureData = [
+                { name: 'イス',   file: 'chair.glb',      height: 0.79 },
+                { name: '本棚',   file: 'bookshelf.glb',  height: 1.8  },
+                { name: '脚立',   file: 'stand.glb',      height: 1.2  },
+            ];
+            let currentFurniture = furnitureData[0];
+            
+            // 元のコードのUI操作関数やヘルパー関数をここに移動
+            // (createCrossMark, preloadModels, setupUI, updateUI, handleTouchStart, etc...)
+            // ...
+
+            // 8th Wallエンジンのライフサイクルにフックする
+            return {
+                // パイプラインモジュールの名前
+                name: 'my-ar-scene',
+
+                // onStart: ARセッションの開始時に一度だけ呼ばれる初期化関数
+                onStart: ({ canvas }) => {
+                    const { scene: threeScene, camera: threeCamera, renderer: threeRenderer } = XR8.Threejs.xrScene({ canvas });
+                    
+                    scene = threeScene;
+                    camera = threeCamera;
+                    renderer = threeRenderer;
+                    clock = new THREE.Clock();
+
+                    // ライトを追加
+                    scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3));
+                    
+                    // 各種UIの初期化とイベントリスナーの設定
+                    // setupUI(); // この中でDOM要素を取得しイベントリスナーを設定
+                    
+                    // モデルの事前読み込み
+                    // preloadModels();
+                    
+                    // レティクル（配置先の目印）の作成
+                    reticle = new THREE.Mesh(
+                        new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
+                        new THREE.MeshBasicMaterial()
+                    );
+                    reticle.visible = false;
+                    scene.add(reticle);
+
+                    // ここに元のinit()やsetupUI()の中身を移植します
+                    // 例: document.getElementById('add-button').addEventListener(...)
+
+                    // ARセッションが開始されたらタイトルを非表示に
+                    document.getElementById('title-container').style.display = 'none';
+
+                    // カメラの動きに追従してほしいので、毎フレーム描画を指示
+                    XR8.XrController.configure({ MESH_DETECTION: true });
+                },
+
+                // onUpdate: 毎フレーム呼ばれる描画ループ関数
+                onUpdate: () => {
+                    const elapsedTime = clock.getElapsedTime();
+
+                    // 削除アニメーションなどの毎フレーム処理をここに
+                    // ...
+
+                    // 8th Wallのレイキャストで平面を検出
+                    const { hits } = XR8.XrController.hitTest(0.5, 0.5, [XR8.XrConfig.HIT_TEST_TYPE.ESTIMATED_SURFACE]);
+
+                    if (hits.length > 0) {
+                        const hit = hits[0];
+                        
+                        if (!isFloorDetected) {
+                            isFloorDetected = true;
+                            floorY = hit.position.y;
+                            // updateUI(); // 床が見つかったのでUIを更新
+                        }
+                        
+                        reticle.visible = true;
+                        reticle.position.copy(hit.position);
+                        reticle.rotation.copy(hit.rotation);
+
+                        // プレビューオブジェクトの位置を更新
+                        if (previewObject) {
+                           previewObject.position.copy(hit.position);
+                           previewObject.visible = true;
+                        }
+
+                    } else {
+                        reticle.visible = false;
+                        if(previewObject) previewObject.visible = false;
+                    }
+
+                    // オブジェクトのホバー判定など
+                    // handleHover();
+
+                    renderer.render(scene, camera);
+                },
+                // 注: 元のコードのすべての関数とロジックをこのモジュール内に移植する必要があります。
+                //     ここでは主要な構造の変更点のみを示しています。
+            }
+        }
+
+        // 2. 8th Wallのカメラパイプラインに作成したモジュールを追加します
+        XR8.addCameraPipelineModules([
+            XR8.GlTextureRenderer.pipelineModule(),      // カメラフィードを描画
+            XR8.Threejs.pipelineModule(),                // three.jsのシーンを統合
+            XR8.XrController.pipelineModule(),           // コントローラー（タップ、ヒットテスト）
+            myScenePipelineModule(),                     // 作成したカスタムシーンモジュール
+        ]);
+
+        // 3. アプリケーションを開始します
+        XR8.run({
+            canvas: document.getElementById('camerafeed'),
+            allowedDevices: XR8.XrConfig.device().ANY,
+        });
+
+    </script>
+</body>
+</html>
